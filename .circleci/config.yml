@@ -1,0 +1,55 @@
+# This code is licensed from CircleCI to the user under the MIT license.
+# See here for details: https://circleci.com/developer/orbs/licensing
+version: 2.1
+
+description: |
+  A standard workflow for deploying ambassador platform services to their respective dev environments.
+
+orbs:
+  gcp-cli: circleci/gcp-cli@1.0.0
+  kubernetes: circleci/kubernetes@0.1.0
+  
+environment:
+      - PROJECT_NAME: "my-app"
+      - GOOGLE_PROJECT_ID: "playground-s-11-2c8cc05f"
+      - GOOGLE_COMPUTE_ZONE: "us-central1-c"
+      - GOOGLE_CLUSTER_NAME: "cluster-2"
+
+jobs:
+  deploy:
+    machine:
+      enabled: true
+      docker_layer_caching: true
+
+    shell: /bin/bash --login
+    steps:
+      - gcp-cli/install
+      - kubernetes/install
+      - run:
+          name: Configure gcp-cli and kubectl
+          command: |
+            apt-get install -qq -y gettext
+            echo $GCLOUD_SERVICE_KEY > ${HOME}/gcloud-service-key.json
+            gcloud auth activate-service-account --key-file=${HOME}/gcloud-service-key.json
+            gcloud --quiet config set project ${GOOGLE_PROJECT_ID}
+            gcloud --quiet config set compute/zone ${GOOGLE_COMPUTE_ZONE}
+            gcloud --quiet container clusters get-credentials ${GOOGLE_CLUSTER_NAME}
+      - checkout
+      - run:
+          name: Generate container tag
+          command: |
+            echo "export CONTAINER_TAG=$CIRCLE_BRANCH-$(git rev-parse --short $CIRCLE_SHA1)" >> $BASH_ENV
+      - run:
+          name: Export env
+          command: |
+            cat \<<EOF > ${HOME}/.env
+            $(env)
+            EOF
+      - run:
+          name: Pull kubernetes config
+          command: |
+            git clone ${CONFIG_REPO} ${HOME}/config && cd ${HOME}/config
+      - run:
+          name: Merge tags and apply config
+          command: |
+            docker run -i --env-file=${HOME}/.env --mount type=bind,source="${HOME}/config",target="/config" brandoshmando/yaml-merge | kubectl apply -f -
